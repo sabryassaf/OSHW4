@@ -2,13 +2,13 @@
 #include <stdlib.h>
 
 void * smalloc(size_t size) {
-    // try to allocate 'size' bytes
-    void *p = malloc(size);
-    if (p == NULL) {
-        if (size == 0) { return NULL;}
-        //if size > 10^8 return NULL
-        else if (size > 100000000) { return NULL; }
-        //if sbrk fails return NULL
-        
-    } else { return p; }
+    if (size == 0 || size > 100000000) {
+        return NULL;
+    }
+    // try to allocate 'size' bytes. without using malloc
+    void * p = sbrk(size);
+    if (sbrk(0) == (void*)-1) { 
+        return NULL; 
+    }
+    return p;
 }
