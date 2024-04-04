@@ -38,7 +38,87 @@ struct MallocMetaData {
 MallocMetaData* listOfOrders[MAX_ORDER];
 bool flag = false;
 
+int findRealOrderOfBlock(size_t size) {
+    int order = 0;
+    // include metaDataSize
+    size += sizeof(MallocMetaData);
+    while (size > 128) {
+        size = size >> 1;
+        order++;
+    }
+    return order;
+}
 
+void removeBlockFromOrderList(MallocMetaData* block) {
+    int order = findRealOrderOfBlock(block->size);
+    // if its the first block
+    if (block->prev == NULL) {
+        listOfOrders[order] = block->next;
+    } else {
+        block->prev->next = block->next;
+    }
+    if (block->next != NULL) {
+        block->next->prev = block->prev;
+    }
+}
+
+/*
+@param: size, block
+@return: split the block recursively until the block is of the required size
+*/
+void splitBlock(size_t size, MallocMetaData* block) {
+    // check if the current block has double the size of used block + 2 metadata and bigger than 128 byte
+    while ((block->size+ sizeof(MallocMetaData)) / 2 >= (size + sizeof(MallocMetaData)) && ((block->size + sizeof(MallocMetaData) / 2) >= 128)) {
+        // split the block, initiate a new block
+        MallocMetaData* newBlock = (MallocMetaData*)((size_t)block + (block->size + sizeof(MallocMetaData)) / 2);
+        newBlock->size = (block->size - sizeof(MallocMetaData)) / 2;
+        newBlock->usedSize = 0;
+        newBlock->is_free = true;
+        newBlock->prev = block;
+
+        // remove old block from the list of orders
+        removeBlockFromOrderList(block);
+        // TODOO check ------- 
+        block->next = newBlock;
+        block->size = block->size / 2 - sizeof(MallocMetaData);
+        block->usedSize = 0;
+        block->is_free = true;
+        block = newBlock;
+        // update global trackers
+        freeBlocks++;
+        freeBytes += block->size;
+        metadataBytes += sizeof(MallocMetaData);
+    
+    }
+}
+
+/*
+find the best available block in the list of orders
+return -1 if not found
+*/
+int findOrderOfBlock(size_t size) {
+    int order = findOrderOfBlock(size);
+    for (int i = order; i <= MAX_ORDER; i++) {
+        if (listOfOrders[i] != NULL) {
+            return i;
+        }
+    }
+    // no suitable order found
+    return -1;
+}
+/*
+allocate tightest fitting block
+split incase needed
+*/
+void* allcoateBlock(size_t size) {
+    int order = findOrderOfBlock(size);
+    if (order == -1) {
+        return NULL;
+    }
+    // we always use the first block in the list of orders[order]
+    // check if possible split
+
+}
 void* smalloc(size_t size) {
     // first usage of smalloc, allocate the list of orders
     if(!flag) {
@@ -109,8 +189,8 @@ void* smalloc(size_t size) {
             return (void*)(++ptr);
 
         } else{
-            // allocating small sized blocks
-            // TODO
+            // allocate suitable block, with splits if needed
+
         }
 
     }
