@@ -23,7 +23,10 @@ struct MallocMetaData {
 
 MallocMetaData* head = NULL;
 
-void* smalloc(size_t size) {
+/*
+    returns pointer to allocated memory block of at least size bytes
+*/
+void* smalloc(size_t size) { 
     if (size == 0 || size > 100000000) {
         return NULL;
     }
@@ -36,7 +39,7 @@ void* smalloc(size_t size) {
             // update global trackers
             freeBlocks--;
             freeBytes -= current->size;
-            return (void*)(current + sizeof(MallocMetaData));
+            return (void*)(++current);
         }
         if (current->next == NULL) {
             break;
@@ -73,8 +76,8 @@ void* smalloc(size_t size) {
     }
 
     // return a pointer to the allocated block - excluding the metadata
-    return (void*)(new_block + sizeof(MallocMetaData));
-};
+    return (void*)(++new_block);
+}
 
 void* scalloc(size_t num, size_t size) {
      if (size == 0 || num == 0 || size*num > 100000000) {
@@ -88,13 +91,13 @@ void* scalloc(size_t num, size_t size) {
         if (current->is_free && current->size >= (size * num)) {
             current->is_free = false;
             // set the bytes to zero
-            std::memset((void*)(current + sizeof(MallocMetaData)), 0, num * size);
             current->is_free = false;
             // update global trackers
             freeBlocks--;
             freeBytes -= current->size;
+            std::memset(++current , 0, num * size);
 
-            return (void*)(current + sizeof(MallocMetaData));
+            return (void*)current;
 
         }
         if (current->next == NULL) {
@@ -128,20 +131,20 @@ void* scalloc(size_t num, size_t size) {
     }
 
     // set the bytes to zero
-    std::memset((void*) (new_block + sizeof(MallocMetaData)), 0, num * size);
-    return (void*)(new_block + sizeof(MallocMetaData));
+    std::memset(++new_block, 0, num * size);
+    return (void*)(new_block);
 }
 
 
 void sfree(void* p) {
-    if (p == NULL || ((MallocMetaData*)(p - sizeof(MallocMetaData)))->is_free) {
+    if (p == NULL || (((MallocMetaData*)p - 1)->is_free)) {
         return;
     }
     // assuming that p truly points to the beginning of an allocated block
-    ((MallocMetaData*)(p - sizeof(MallocMetaData)))->is_free = true;
+    ((MallocMetaData*)p - 1)->is_free = true;
     // update global trackers
     freeBlocks++;
-    freeBytes += ((MallocMetaData*)(p - sizeof(MallocMetaData)))->size;
+    freeBytes += ((MallocMetaData*)p - 1)->size;
 }
 
 void* srealloc(void* oldp, size_t size) {
@@ -151,9 +154,25 @@ void* srealloc(void* oldp, size_t size) {
     if (oldp == NULL) {
         return smalloc(size);
     }
-    // TODO
-    
+    // point to oldPtr BlockMetaData
+    MallocMetaData* reallocBlockMetaData = ((MallocMetaData*)oldp - 1);
+    if (size <= reallocBlockMetaData->size) {
+        return oldp;
+    }
+    // find/allocate a new block with the new size
+    void* newp = smalloc(size);
+    // if smalloc failed, return NULL
+    if (newp == NULL) {
+        return NULL;
+    }
+    // copy the data from the old block to the new block
+    std::memmove(newp, oldp, reallocBlockMetaData->size);
+
+    // free the old block
+    sfree(oldp);
+    return newp;
 }
+
 
 size_t _num_free_blocks() {
     return freeBlocks;
