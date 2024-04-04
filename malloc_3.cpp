@@ -48,7 +48,9 @@ int findRealOrderOfBlock(size_t size) {
     }
     return order;
 }
-
+/*
+remove block from list without changing its availability status
+*/
 void removeBlockFromOrderList(MallocMetaData* block) {
     int order = findRealOrderOfBlock(block->size);
     // if its the first block
@@ -59,6 +61,23 @@ void removeBlockFromOrderList(MallocMetaData* block) {
     }
     if (block->next != NULL) {
         block->next->prev = block->prev;
+    }
+    // update the block
+    block->next = NULL;
+    block->prev = NULL;
+}
+
+void addBlockToOrderList(MallocMetaData* block) {
+    int order = findRealOrderOfBlock(block->size);
+    if (listOfOrders[order] == NULL) {
+        listOfOrders[order] = block;
+        block->next = NULL;
+        block->prev = NULL;
+    } else {
+        block->next = listOfOrders[order];
+        block->prev = NULL;
+        listOfOrders[order]->prev = block;
+        listOfOrders[order] = block;
     }
 }
 
@@ -78,17 +97,20 @@ void splitBlock(size_t size, MallocMetaData* block) {
 
         // remove old block from the list of orders
         removeBlockFromOrderList(block);
-        // TODOO check ------- 
         block->next = newBlock;
-        block->size = block->size / 2 - sizeof(MallocMetaData);
+        block->size = (block->size - sizeof(MallocMetaData)) / 2;
         block->usedSize = 0;
         block->is_free = true;
-        block = newBlock;
+
+        // add the both blocks to the list of orders
+        addBlockToOrderList(block);
+        addBlockToOrderList(newBlock);
+
         // update global trackers
-        freeBlocks++;
-        freeBytes += block->size;
+        allocatedBlocks++;
+            //we have added an extra meta data
+        allocatedBytes -= sizeof(MallocMetaData);
         metadataBytes += sizeof(MallocMetaData);
-    
     }
 }
 
@@ -117,7 +139,19 @@ void* allcoateBlock(size_t size) {
     }
     // we always use the first block in the list of orders[order]
     // check if possible split
+    splitBlock(size, listOfOrders[order]);
 
+    // check if there is better orderOfBlock after splitting
+    order = findOrderOfBlock(size);
+    if (order == -1) {
+        return NULL;
+    }
+
+    MallocMetaData* block = listOfOrders[order];
+    removeBlockFromOrderList(block);
+    block->is_free = false;
+    block->usedSize = size;
+    return (void*)(++block);
 }
 void* smalloc(size_t size) {
     // first usage of smalloc, allocate the list of orders
