@@ -128,6 +128,7 @@ int findOrderOfBlock(size_t size) {
     // no suitable order found
     return -1;
 }
+
 /*
 allocate tightest fitting block
 split incase needed
@@ -153,6 +154,49 @@ void* allcoateBlock(size_t size) {
     block->usedSize = size;
     return (void*)(++block);
 }
+
+MallocMetaData* locateBuddy(MallocMetaData* block) {
+    if (block->size >= MAX_BLOCK_SIZE || block == NULL) {
+        return NULL;
+    }
+    size_t blockSize = (size_t)block->size + sizeof(MallocMetaData);
+    //XOR between block address and size
+    return (MallocMetaData*)((size_t)block ^ blockSize);
+}
+
+/*
+merge free blocks in the list of orders
+*/
+void mergeFreeBlocks(MallocMetaData* block) {
+    // find a buddy to merge
+    MallocMetaData* buddy = locateBuddy(block);
+    if (buddy == NULL) {
+        return;
+    }
+    // check if buddy is free
+    if (buddy->is_free) {
+        // TODO---------- CHECK
+        
+        // remove buddy from the list of orders
+        removeBlockFromOrderList(buddy);
+        // merge the two blocks
+        MallocMetaData* newBlock = (MallocMetaData*)((size_t)block < (size_t)buddy ? block : buddy);
+        newBlock->size = newBlock->size * 2 + sizeof(MallocMetaData);
+        newBlock->usedSize = 0;
+        newBlock->is_free = true;
+        newBlock->next = NULL;
+        newBlock->prev = NULL;
+        // add the new block to the list of orders
+        addBlockToOrderList(newBlock);
+        // update global trackers
+        allocatedBlocks--;
+        allocatedBytes -= sizeof(MallocMetaData);
+        metadataBytes -= sizeof(MallocMetaData);
+        // recursively merge the new block
+        mergeFreeBlocks(newBlock);
+    }
+}
+
 void* smalloc(size_t size) {
     // first usage of smalloc, allocate the list of orders
     if(!flag) {
@@ -222,13 +266,44 @@ void* smalloc(size_t size) {
             allocatedBytes += size;
             return (void*)(++ptr);
 
-        } else{
-            // allocate suitable block, with splits if needed
-
+        } else {
+            return allcoateBlock(size);
         }
-
     }
+}
 
+void* scalloc(size_t number, size_t size) {
+    // allocate requested size
+    void* block = smalloc(number * size);
 
+    // test if failed
+    if (block == NULL) {
+        return NULL;
+    }
+    return memset(block, 0, number * size);
+}
 
+void sfree(void* p) {
+    // test if valid
+    if (p == NULL) {
+        return;
+    }
+    // point to MetaData
+    MallocMetaData* blockToFree = (MallocMetaData*)((size_t)p - sizeof(MallocMetaData));
+
+    // check if block is allocated via mmap
+    if ((blockToFree->size + sizeof(MallocMetaData)) > MAX_BLOCK_SIZE) {
+        // free the block
+        munmap((void*) blockToFree, blockToFree->size + sizeof(MallocMetaData));
+        // update global trackers
+        allocatedBlocks--;
+        allocatedBytes -= blockToFree->size;
+        return;
+    } else {
+        // update block status
+        blockToFree->is_free = true;
+
+        // merge free blocks
+        mergeFreeBlocks(blockToFree);
+    }
 }
