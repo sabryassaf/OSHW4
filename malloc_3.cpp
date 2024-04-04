@@ -82,7 +82,39 @@ void* smalloc(size_t size) {
             //update global trackers
             allocatedBlocks++;
         }
+    } else{
+        // heap memory has been defined
+        if (size == 0 || size > 100000000) {
+            return NULL;
+        }
+        // allocating very large space
+        if (sizeof(MallocMetaData) + size > MAX_BLOCK_SIZE) {           
+            // use mmap
+            MallocMetaData* ptr = (MallocMetaData*)mmap(NULL, size + sizeof(MallocMetaData), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+            if (ptr == MAP_FAILED) {
+                return NULL;
+            }
+            // update MetaData
+            ptr->size = size;
+            ptr->usedSize = size;
+            ptr->is_free = false;
+
+            // block allocated via mmap, is not connected to double linked list of regular blocks
+            ptr->next = NULL;
+            ptr->prev = NULL;
+
+            // update global trackers
+            allocatedBlocks++;
+            allocatedBytes += size;
+            return (void*)(++ptr);
+
+        } else{
+            // allocating small sized blocks
+            // TODO
+        }
+
     }
+
 
 
 }
