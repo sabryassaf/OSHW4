@@ -36,7 +36,7 @@ void* smalloc(size_t size) {
             listOfOrders[i] = NULL;
         }
     // alligh the initial 32 blocks of size 128 kb in memoery so their starting address is multiple of 32*128kb
-    
+        
 
     }
 
