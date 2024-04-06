@@ -18,13 +18,11 @@ bool status = false;
 // MallocMetaData
 struct MallocMetaData {
     size_t size;
-    size_t usedSize;
     bool is_free;
     MallocMetaData* next;
     MallocMetaData* prev;
     void initiateFirstMetaData(size_t size, MallocMetaData* prev) {
         this->size = size;
-        this->usedSize = 0;
         this->is_free = true;
         this->next = NULL;
         this->prev = prev;
@@ -87,16 +85,38 @@ void removeBlockFromOrderList(MallocMetaData* block) {
 }
 
 void addBlockToOrderList(MallocMetaData* block) {
-    int order = findRealOrderOfBlock(block->size);
+    size_t order = findRealOrderOfBlock(block->size);
+    MallocMetaData* currentElement = listOfOrders[order];
     if (listOfOrders[order] == NULL) {
         listOfOrders[order] = block;
         block->next = NULL;
         block->prev = NULL;
     } else {
-        block->next = listOfOrders[order];
-        block->prev = NULL;
-        listOfOrders[order]->prev = block;
-        listOfOrders[order] = block;
+        // added in ascedning order of the sizes in the current listofrders[order]
+        if (block < currentElement) {
+            block->next = listOfOrders[order];
+            block->prev = NULL;
+            listOfOrders[order]->prev = block;
+            listOfOrders[order] = block;
+            return;
+        } else {
+            while (block > currentElement) {
+                if (currentElement->next == NULL) {
+                    currentElement->next = block;
+                    block ->prev = currentElement;
+                    block ->next = NULL;
+                    return;
+                }
+                currentElement = currentElement->next;
+            }
+            //insert the node
+                MallocMetaData* left = currentElement->prev;
+                left->next = block;
+                block ->prev = left;
+                block->next = currentElement;
+                currentElement->prev = block;
+                return;
+        }
     }
 }
 
@@ -110,7 +130,6 @@ void splitBlock(size_t size, MallocMetaData* block) {
         // split the block, initiate a new block
         MallocMetaData* newBlock = (MallocMetaData*)((size_t)block + (block->size + sizeof(MallocMetaData)) / 2);
         newBlock->size = (block->size - sizeof(MallocMetaData)) / 2;
-        newBlock->usedSize = 0;
         newBlock->is_free = true;
         newBlock->prev = block;
         newBlock->next = NULL;
@@ -118,7 +137,6 @@ void splitBlock(size_t size, MallocMetaData* block) {
         removeBlockFromOrderList(block);
         block->next = newBlock;
         block->size = (block->size - sizeof(MallocMetaData)) / 2;
-        block->usedSize = 0;
         block->is_free = true;
 
         // add the both blocks to the list of orders
@@ -169,7 +187,6 @@ void* allcoateBlock(size_t size) {
     MallocMetaData* block = listOfOrders[order];
     removeBlockFromOrderList(block);
     block->is_free = false;
-    block->usedSize = size;
     return (void*)(++block);
 }
 
@@ -205,7 +222,6 @@ void mergeFreeBlocks(MallocMetaData* block) {
         // merge the two blocks
         MallocMetaData* newBlock = (MallocMetaData*)((size_t)block < (size_t)buddy ? block : buddy);
         newBlock->size = block->size * 2 + sizeof(MallocMetaData);
-        newBlock->usedSize = 0;
         newBlock->is_free = true;
         newBlock->next = NULL;
         newBlock->prev = NULL;
@@ -283,7 +299,6 @@ void* smalloc(size_t size) {
         }
         // update MetaData
         ptr->size = size;
-        ptr->usedSize = size;
         ptr->is_free = false;
 
         // block allocated via mmap, is not connected to double linked list of regular blocks
@@ -312,6 +327,82 @@ void* scalloc(size_t number, size_t size) {
     return memset(block, 0, number * size);
 }
 
+
+
+// //// test
+// bool merge(MallocMetaData* data1,MallocMetaData* data2){
+//     if(!data1->is_free || !data2->is_free || findRealOrderOfBlock(data1->size) == MAX_ORDER || findRealOrderOfBlock(data2->size) == MAX_ORDER) {
+//         if(data1->is_free && findRealOrderOfBlock(data1->size) != MAX_ORDER){
+//             addBlockToOrderList(data1);
+//         }
+//         else if(data2->is_free && findRealOrderOfBlock(data2->size) != MAX_ORDER){
+//             addBlockToOrderList(data2);
+//         }
+//         return false;
+//     }
+//     if(data2 < data1){
+//         MallocMetaData* tmp = data1;
+//         data1 = data2;
+//         data2 = tmp;
+//     }
+
+//     removeBlockFromOrderList(data1);
+//     data1->is_free=true;
+
+//     removeBlockFromOrderList(data2);
+//     data2->is_free=true;
+
+//     data1->size = data1->size * 2 + sizeof(MallocMetaData);
+//     allocatedBlocks--;
+//     allocatedBytes += sizeof(MallocMetaData);
+//     addBlockToOrderList(data1);
+//     return true;
+// }
+
+
+// void mergeBlocks(MallocMetaData* block){
+//     MallocMetaData* buddy = locateBuddy(block);
+//     if(!buddy)
+//         return;
+//     if(block->size != buddy->size){
+//         addBlockToOrderList(block);
+//     }
+//     if(findRealOrderOfBlock(block->size) == MAX_ORDER){
+//         addBlockToOrderList(block);
+//     }
+//     while(block->size == buddy->size){
+//         if(!merge(block,buddy)) {
+//             return;
+//         }
+//         buddy = locateBuddy(block);
+//         if(!buddy)
+//             return;
+//     }
+// }
+
+// void sfree(void* p)
+// {
+//     if(!p)
+//         return;
+//     MallocMetaData* struct_pointer = (MallocMetaData*)((size_t)p - sizeof(MallocMetaData));
+//     if(struct_pointer->is_free)
+//         return;
+//     if (struct_pointer->size + sizeof(MallocMetaData) > MAX_BLOCK_SIZE)
+//     {
+//         int size=struct_pointer->size;
+//         munmap((void*)struct_pointer, struct_pointer->size + sizeof(MallocMetaData));
+//         allocatedBytes -= size;
+//         allocatedBlocks--;
+//         return;
+//     }
+//     struct_pointer->is_free = true;
+//     mergeFreeBlocks(struct_pointer);
+// }
+
+
+
+
+
 void sfree(void* p) {
     // test if valid
     if (p == NULL) {
@@ -319,7 +410,7 @@ void sfree(void* p) {
     }
     // point to MetaData
     MallocMetaData* blockToFree = (MallocMetaData*)(p);
-    blockToFree--;
+    --blockToFree;
     if(blockToFree->is_free) {
         return;
     }
