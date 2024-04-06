@@ -170,15 +170,17 @@ void* allcoateBlock(size_t size) {
     removeBlockFromOrderList(block);
     block->is_free = false;
     block->usedSize = size;
-    std::cout<<"current free blocks "<<_num_free_blocks()<<std::endl;
     return (void*)(++block);
 }
 
 MallocMetaData* locateBuddy(MallocMetaData* block) {
-    if (block->size >= MAX_BLOCK_SIZE || block == NULL) {
+    if ( block == NULL) {
         return NULL;
     }
-    size_t blockSize = (size_t)block->size + sizeof(MallocMetaData);
+    if (block->size >= MAX_BLOCK_SIZE) {
+        return NULL;
+    }
+    size_t blockSize = block->size + sizeof(MallocMetaData);
     //XOR between block address and size
     return (MallocMetaData*)((size_t)block ^ blockSize);
 }
@@ -187,13 +189,17 @@ MallocMetaData* locateBuddy(MallocMetaData* block) {
 merge free blocks in the list of orders
 */
 void mergeFreeBlocks(MallocMetaData* block) {
+
+    if ((block->size + sizeof(MallocMetaData)) > MAX_BLOCK_SIZE/2) {
+        return;
+    }
     // find a buddy to merge
     MallocMetaData* buddy = locateBuddy(block);
     if (buddy == NULL) {
         return;
     }
     // check if buddy is free
-    if (buddy->is_free) {
+    if (buddy->is_free && buddy->size < MAX_BLOCK_SIZE && buddy->size == block->size) {
         // remove buddy from the list of orders
         removeBlockFromOrderList(buddy);
         // merge the two blocks
@@ -205,15 +211,20 @@ void mergeFreeBlocks(MallocMetaData* block) {
         newBlock->prev = NULL;
         // add the new block to the list of orders
         addBlockToOrderList(newBlock);
+
         // remove block from list of orders
         removeBlockFromOrderList(block);
+
         block->is_free = true;
         // update global trackers
         allocatedBlocks--;
         allocatedBytes += sizeof(MallocMetaData);
         // recursively merge the new block
         mergeFreeBlocks(newBlock);
+    } else {
+        addBlockToOrderList(block);
     }
+
 }
 
 // define a global flag
@@ -285,6 +296,7 @@ void* smalloc(size_t size) {
         // update global trackers
         allocatedBlocks++;
         allocatedBytes += size;
+        std::cout<<"added large data"<<std::endl;
         return (void*)(++ptr);
 
     } else {
@@ -310,8 +322,8 @@ void sfree(void* p) {
         return;
     }
     // point to MetaData
-    MallocMetaData* blockToFree = (MallocMetaData*)((size_t)p - sizeof(MallocMetaData));
-
+    MallocMetaData* blockToFree = (MallocMetaData*)(p);
+    blockToFree--;
     // check if block is allocated via mmap
     if ((blockToFree->size + sizeof(MallocMetaData)) > MAX_BLOCK_SIZE) {
         // free the block
@@ -319,29 +331,24 @@ void sfree(void* p) {
         // update global trackers
         allocatedBlocks--;
         allocatedBytes -= blockToFree->size;
+        std::cout<<"deallocating large data" <<std::endl;
         return;
     } else {
         // update block status
         blockToFree->is_free = true;
-
         // merge free blocks
         mergeFreeBlocks(blockToFree);
     }
+    
 }
 
 void* srealloc(void* oldp, size_t size) {
     return NULL;    
 }
 
-
-
-
-
 size_t _num_allocated_bytes() {
     return allocatedBytes;
 }
-
-
 
 size_t _num_free_bytes() {
     int num = 0;
