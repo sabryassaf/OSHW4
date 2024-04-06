@@ -10,11 +10,10 @@
 #define MAX_BLOCK_SIZE 1024*128
 
 // initiate global variables to track free blocks,bytes and alocated blocks,bytes
-size_t freeBlocks = 0;
-size_t freeBytes = 0;
 size_t allocatedBlocks = 0;
 size_t allocatedBytes = 0;
 
+bool status = false;
 
 // MallocMetaData
 struct MallocMetaData {
@@ -32,10 +31,31 @@ struct MallocMetaData {
     }
 };
 
+size_t _size_meta_data() {
+    return sizeof(MallocMetaData);
+}
+
+size_t _num_allocated_blocks() {
+    return allocatedBlocks;
+}
+
+
 
 // global trackers
 MallocMetaData* listOfOrders[MAX_ORDER];
-bool flag = false;
+
+size_t _num_free_blocks() {
+    int num = 0;
+    for (int i = 0; i <= MAX_ORDER; i++) {
+        MallocMetaData* tmp = listOfOrders[i];
+        while (tmp != NULL) {
+            num++;
+            tmp = tmp->next;
+        }
+    }
+    return num;
+}
+
 
 int findRealOrderOfBlock(size_t size) {
     int order = 0;
@@ -86,17 +106,16 @@ void addBlockToOrderList(MallocMetaData* block) {
 */
 void splitBlock(size_t size, MallocMetaData* block) {
     // check if the current block has double the size of used block + 2 metadata and bigger than 128 byte
-    int counter = 0;
-    while ((block->size+ sizeof(MallocMetaData)) / 2 >= (size + sizeof(MallocMetaData)) && ((block->size + sizeof(MallocMetaData) / 2) >= 128)) {
+    while ((block->size+ sizeof(MallocMetaData)) / 2 > (size + sizeof(MallocMetaData)) && ((block->size + sizeof(MallocMetaData) / 2) > 128)) {
         // split the block, initiate a new block
         MallocMetaData* newBlock = (MallocMetaData*)((size_t)block + (block->size + sizeof(MallocMetaData)) / 2);
         newBlock->size = (block->size - sizeof(MallocMetaData)) / 2;
         newBlock->usedSize = 0;
         newBlock->is_free = true;
         newBlock->prev = block;
+        newBlock->next = NULL;
         // remove old block from the list of orders
         removeBlockFromOrderList(block);
-        counter ++;
         block->next = newBlock;
         block->size = (block->size - sizeof(MallocMetaData)) / 2;
         block->usedSize = 0;
@@ -151,6 +170,7 @@ void* allcoateBlock(size_t size) {
     removeBlockFromOrderList(block);
     block->is_free = false;
     block->usedSize = size;
+    std::cout<<"current free blocks "<<_num_free_blocks()<<std::endl;
     return (void*)(++block);
 }
 
@@ -174,8 +194,6 @@ void mergeFreeBlocks(MallocMetaData* block) {
     }
     // check if buddy is free
     if (buddy->is_free) {
-        // TODO---------- CHECK
-        
         // remove buddy from the list of orders
         removeBlockFromOrderList(buddy);
         // merge the two blocks
@@ -198,14 +216,16 @@ void mergeFreeBlocks(MallocMetaData* block) {
     }
 }
 
+// define a global flag
+
 void* smalloc(size_t size) {
     // first usage of smalloc, allocate the list of orders
-    if(!flag) {
+    if(!status) {
         for(int i = 0; i <= MAX_ORDER; i++) {
             listOfOrders[i] = NULL;
         }
-        flag = true;
-
+        //update global flag to true
+        status = true;
         // allign the initial 32 blocks of size 128 kb in memoery so their starting address is multiple of 32*128kb
         size_t allign = MAX_BLOCK_SIZE * 32;
         size_t initiatedPb = (size_t)(sbrk(0));
@@ -313,29 +333,15 @@ void* srealloc(void* oldp, size_t size) {
     return NULL;    
 }
 
-size_t _size_meta_data() {
-    return sizeof(MallocMetaData);
-}
 
-size_t _num_allocated_blocks() {
-    return allocatedBlocks;
-}
+
+
 
 size_t _num_allocated_bytes() {
     return allocatedBytes;
 }
 
-size_t _num_free_blocks() {
-    int num = 0;
-    for (int i = 0; i <= MAX_ORDER; i++) {
-        MallocMetaData* tmp = listOfOrders[i];
-        while (tmp != NULL) {
-            num++;
-            tmp = tmp->next;
-        }
-    }
-    return num;
-}
+
 
 size_t _num_free_bytes() {
     int num = 0;
