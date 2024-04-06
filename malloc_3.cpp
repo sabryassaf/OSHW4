@@ -106,7 +106,7 @@ void addBlockToOrderList(MallocMetaData* block) {
 */
 void splitBlock(size_t size, MallocMetaData* block) {
     // check if the current block has double the size of used block + 2 metadata and bigger than 128 byte
-    while ((block->size+ sizeof(MallocMetaData)) / 2 > (size + sizeof(MallocMetaData)) && ((block->size + sizeof(MallocMetaData) / 2) > 128)) {
+    while ((block->size+ sizeof(MallocMetaData)) / 2 >= (size + sizeof(MallocMetaData)) && ((block->size + sizeof(MallocMetaData) / 2) >= 128)) {
         // split the block, initiate a new block
         MallocMetaData* newBlock = (MallocMetaData*)((size_t)block + (block->size + sizeof(MallocMetaData)) / 2);
         newBlock->size = (block->size - sizeof(MallocMetaData)) / 2;
@@ -177,7 +177,7 @@ MallocMetaData* locateBuddy(MallocMetaData* block) {
     if ( block == NULL) {
         return NULL;
     }
-    if (block->size >= MAX_BLOCK_SIZE) {
+    if (block->size > MAX_BLOCK_SIZE) {
         return NULL;
     }
     size_t blockSize = block->size + sizeof(MallocMetaData);
@@ -199,12 +199,12 @@ void mergeFreeBlocks(MallocMetaData* block) {
         return;
     }
     // check if buddy is free
-    if (buddy->is_free && buddy->size < MAX_BLOCK_SIZE && buddy->size == block->size) {
+    if (buddy->is_free && buddy->size == block->size) {
         // remove buddy from the list of orders
         removeBlockFromOrderList(buddy);
         // merge the two blocks
         MallocMetaData* newBlock = (MallocMetaData*)((size_t)block < (size_t)buddy ? block : buddy);
-        newBlock->size = newBlock->size * 2 + sizeof(MallocMetaData);
+        newBlock->size = block->size * 2 + sizeof(MallocMetaData);
         newBlock->usedSize = 0;
         newBlock->is_free = true;
         newBlock->next = NULL;
@@ -221,10 +221,7 @@ void mergeFreeBlocks(MallocMetaData* block) {
         allocatedBytes += sizeof(MallocMetaData);
         // recursively merge the new block
         mergeFreeBlocks(newBlock);
-    } else {
-        addBlockToOrderList(block);
-    }
-
+    } 
 }
 
 // define a global flag
@@ -296,7 +293,6 @@ void* smalloc(size_t size) {
         // update global trackers
         allocatedBlocks++;
         allocatedBytes += size;
-        std::cout<<"added large data"<<std::endl;
         return (void*)(++ptr);
 
     } else {
@@ -324,18 +320,24 @@ void sfree(void* p) {
     // point to MetaData
     MallocMetaData* blockToFree = (MallocMetaData*)(p);
     blockToFree--;
+    if(blockToFree->is_free) {
+        return;
+    }
     // check if block is allocated via mmap
     if ((blockToFree->size + sizeof(MallocMetaData)) > MAX_BLOCK_SIZE) {
-        // free the block
+        // save tmp data before freeing
+        blockToFree->is_free = true;
+        size_t tmpSize = blockToFree->size;
+        //free the block
         munmap((void*) blockToFree, blockToFree->size + sizeof(MallocMetaData));
         // update global trackers
         allocatedBlocks--;
-        allocatedBytes -= blockToFree->size;
-        std::cout<<"deallocating large data" <<std::endl;
+        allocatedBytes -= tmpSize;
         return;
     } else {
         // update block status
         blockToFree->is_free = true;
+        addBlockToOrderList(blockToFree);
         // merge free blocks
         mergeFreeBlocks(blockToFree);
     }
