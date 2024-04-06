@@ -14,7 +14,6 @@ size_t freeBlocks = 0;
 size_t freeBytes = 0;
 size_t allocatedBlocks = 0;
 size_t allocatedBytes = 0;
-size_t metadataBytes = 0;
 
 
 // MallocMetaData
@@ -87,6 +86,7 @@ void addBlockToOrderList(MallocMetaData* block) {
 */
 void splitBlock(size_t size, MallocMetaData* block) {
     // check if the current block has double the size of used block + 2 metadata and bigger than 128 byte
+    int counter = 0;
     while ((block->size+ sizeof(MallocMetaData)) / 2 >= (size + sizeof(MallocMetaData)) && ((block->size + sizeof(MallocMetaData) / 2) >= 128)) {
         // split the block, initiate a new block
         MallocMetaData* newBlock = (MallocMetaData*)((size_t)block + (block->size + sizeof(MallocMetaData)) / 2);
@@ -94,9 +94,9 @@ void splitBlock(size_t size, MallocMetaData* block) {
         newBlock->usedSize = 0;
         newBlock->is_free = true;
         newBlock->prev = block;
-
         // remove old block from the list of orders
         removeBlockFromOrderList(block);
+        counter ++;
         block->next = newBlock;
         block->size = (block->size - sizeof(MallocMetaData)) / 2;
         block->usedSize = 0;
@@ -110,7 +110,6 @@ void splitBlock(size_t size, MallocMetaData* block) {
         allocatedBlocks++;
             //we have added an extra meta data
         allocatedBytes -= sizeof(MallocMetaData);
-        metadataBytes += sizeof(MallocMetaData);
     }
 }
 
@@ -119,7 +118,7 @@ find the best available block in the list of orders
 return -1 if not found
 */
 int findOrderOfBlock(size_t size) {
-    int order = findOrderOfBlock(size);
+    int order = findRealOrderOfBlock(size);
     for (int i = order; i <= MAX_ORDER; i++) {
         if (listOfOrders[i] != NULL) {
             return i;
@@ -188,10 +187,12 @@ void mergeFreeBlocks(MallocMetaData* block) {
         newBlock->prev = NULL;
         // add the new block to the list of orders
         addBlockToOrderList(newBlock);
+        // remove block from list of orders
+        removeBlockFromOrderList(block);
+        block->is_free = true;
         // update global trackers
         allocatedBlocks--;
-        allocatedBytes -= sizeof(MallocMetaData);
-        metadataBytes -= sizeof(MallocMetaData);
+        allocatedBytes += sizeof(MallocMetaData);
         // recursively merge the new block
         mergeFreeBlocks(newBlock);
     }
@@ -240,37 +241,37 @@ void* smalloc(size_t size) {
             //update global trackers
             allocatedBlocks++;
         }
-    } else{
-        // heap memory has been defined
-        if (size == 0 || size > 100000000) {
+    } 
+    // heap memory has been defined
+    if (size == 0 || size > 100000000) {
+        return NULL;
+    }
+    // allocating very large space
+    if (sizeof(MallocMetaData) + size > (MAX_BLOCK_SIZE)) {           
+        // use mmap
+        MallocMetaData* ptr = (MallocMetaData*)mmap(NULL, size + sizeof(MallocMetaData), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (ptr == MAP_FAILED) {
             return NULL;
         }
-        // allocating very large space
-        if (sizeof(MallocMetaData) + size > MAX_BLOCK_SIZE) {           
-            // use mmap
-            MallocMetaData* ptr = (MallocMetaData*)mmap(NULL, size + sizeof(MallocMetaData), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-            if (ptr == MAP_FAILED) {
-                return NULL;
-            }
-            // update MetaData
-            ptr->size = size;
-            ptr->usedSize = size;
-            ptr->is_free = false;
+        // update MetaData
+        ptr->size = size;
+        ptr->usedSize = size;
+        ptr->is_free = false;
 
-            // block allocated via mmap, is not connected to double linked list of regular blocks
-            ptr->next = NULL;
-            ptr->prev = NULL;
+        // block allocated via mmap, is not connected to double linked list of regular blocks
+        ptr->next = NULL;
+        ptr->prev = NULL;
 
-            // update global trackers
-            allocatedBlocks++;
-            allocatedBytes += size;
-            return (void*)(++ptr);
+        // update global trackers
+        allocatedBlocks++;
+        allocatedBytes += size;
+        return (void*)(++ptr);
 
-        } else {
-            return allcoateBlock(size);
-        }
+    } else {
+        return allcoateBlock(size);
     }
 }
+
 
 void* scalloc(size_t number, size_t size) {
     // allocate requested size
@@ -306,4 +307,48 @@ void sfree(void* p) {
         // merge free blocks
         mergeFreeBlocks(blockToFree);
     }
+}
+
+void* srealloc(void* oldp, size_t size) {
+    return NULL;    
+}
+
+size_t _size_meta_data() {
+    return sizeof(MallocMetaData);
+}
+
+size_t _num_allocated_blocks() {
+    return allocatedBlocks;
+}
+
+size_t _num_allocated_bytes() {
+    return allocatedBytes;
+}
+
+size_t _num_free_blocks() {
+    int num = 0;
+    for (int i = 0; i <= MAX_ORDER; i++) {
+        MallocMetaData* tmp = listOfOrders[i];
+        while (tmp != NULL) {
+            num++;
+            tmp = tmp->next;
+        }
+    }
+    return num;
+}
+
+size_t _num_free_bytes() {
+    int num = 0;
+    for (int i = 0; i <= MAX_ORDER; i++) {
+        MallocMetaData* tmp = listOfOrders[i];
+        while (tmp != NULL) {
+            num += tmp->size;
+            tmp = tmp->next;
+        }
+    }
+    return num;
+}
+
+size_t _num_meta_data_bytes() {
+    return _size_meta_data() * _num_allocated_blocks();
 }
