@@ -19,12 +19,14 @@ bool status = false;
 struct MallocMetaData {
     size_t size;
     bool is_free;
+    size_t realSize;
     MallocMetaData* next;
     MallocMetaData* prev;
     void initiateFirstMetaData(size_t size, MallocMetaData* prev) {
         this->size = size;
         this->is_free = true;
         this->next = NULL;
+        this->realSize = 0;
         this->prev = prev;
     }
 };
@@ -47,6 +49,11 @@ size_t _num_free_blocks() {
     for (int i = 0; i <= MAX_ORDER; i++) {
         MallocMetaData* tmp = listOfOrders[i];
         while (tmp != NULL) {
+            if(!tmp->is_free) {
+                // std::cout<<tmp->is_free<<std::endl;
+                tmp = tmp->next;
+                continue;
+            }
             num++;
             tmp = tmp->next;
         }
@@ -128,7 +135,7 @@ void addBlockToOrderList(MallocMetaData* block) {
 */
 void splitBlock(int size, MallocMetaData* block) {
     // check if the current block has double the size of used block + 2 metadata and bigger than 128 byte
-    while ((block->size+ sizeof(MallocMetaData)) / 2 > (size + sizeof(MallocMetaData)) && ((block->size + sizeof(MallocMetaData) / 2) > 128)) {
+    while ((block->size+ sizeof(MallocMetaData)) / 2 >= (size + sizeof(MallocMetaData)) && ((block->size + sizeof(MallocMetaData) / 2) >= 128)) {
         // split the block, initiate a new block
         MallocMetaData* newBlock = (MallocMetaData*)((size_t)block + (block->size + sizeof(MallocMetaData))/ 2);
         newBlock->size = (block->size - sizeof(MallocMetaData)) / 2;
@@ -142,6 +149,13 @@ void splitBlock(int size, MallocMetaData* block) {
         // add the both blocks to the list of orders
         addBlockToOrderList(block);
         addBlockToOrderList(newBlock);
+
+        // int order = findRealOrderOfBlock(block->size);
+        // MallocMetaData* tmp = listOfOrders[order];
+        // while(tmp != NULL) {
+        //     std::cout<<"in split list size "<< tmp->size<<std::endl;
+        //     tmp = tmp->next;
+        //                     }
         // update global trackers
         allocatedBlocks++;
         // we have added an extra meta data
@@ -185,6 +199,7 @@ void* allcoateBlock(size_t size) {
 
     MallocMetaData* block = listOfOrders[order];
     block->is_free = false;
+    block->realSize = size;
     removeBlockFromOrderList(block);
     return (void*)(++block);
 }
@@ -193,72 +208,42 @@ MallocMetaData* locateBuddy(MallocMetaData* block) {
     if ( block == NULL) {
         return NULL;
     }
-    if (block->size > MAX_BLOCK_SIZE) {
-        return NULL;
-    }
     size_t blockSize = block->size + sizeof(MallocMetaData);
     //XOR between block address and size
-    MallocMetaData* buddy = (MallocMetaData*)((size_t)block ^ blockSize);
-    return buddy;
+    return (MallocMetaData*)((size_t)block ^ blockSize);
 }
 
-/*
-merge free blocks in the list of orders
-*/
-// void mergeFreeBlocksAUX(MallocMetaData* block) {
-
-//     if ((block->size + sizeof(MallocMetaData)) >= MAX_BLOCK_SIZE/2) {
-//         return;
-//     }
-//     // find a buddy to merge
-//     MallocMetaData* buddy = locateBuddy(block);
-//     if (buddy == NULL) {
-//         return;
-//     }
-//     // check if buddy is free
-//     if (buddy->is_free && (buddy->size == block->size)) {
-//         // remove buddy from the list of orders
-//         removeBlockFromOrderList(buddy);
-//         // merge the two blocks
-//         MallocMetaData* newBlock = (MallocMetaData*)((size_t)block < (size_t)buddy ? block : buddy);
-//         newBlock->size = block->size * 2 + sizeof(MallocMetaData);
-//         newBlock->is_free = true;
-//         newBlock->next = NULL;
-//         newBlock->prev = NULL;
-//         removeBlockFromOrderList(block);
-//         // add the new block to the list of orders
-//         addBlockToOrderList(newBlock);
-
-//         // remove block from list of orders
-//         block->is_free = true;
-
-//         // update global trackers
-//         allocatedBlocks--;
-//         std::cout<<"i am merging for size"<<block->size<<std::endl;
-//         allocatedBytes += sizeof(MallocMetaData);
-//         // recursively merge the new block
-//         mergeFreeBlocksAUX(newBlock);
-//     }
-// }
 void mergeWithBuddy(MallocMetaData* block, MallocMetaData* buddy) {
-    // merge block with buddy by erasing buddy's metadata and updating block's metadata to refer
-    // to the new merged block
+    // for (int i = 0; i <= MAX_ORDER; i++) {
+    //     MallocMetaData* temp = listOfOrders[i];
+    //      while(temp != NULL) {
+    //     std::cout<<"in list size before merging for order "<<i<<" size is "<< temp->size<<std::endl;
+    //     temp = temp->next;
+    // }
+    // }
     if (block > buddy) {
         MallocMetaData* tmp = block;
         block = buddy;
         buddy = tmp;
     }
-
-    // remove buddy from the list of orders
+    // std::cout<<"merging"<<std::endl;
     removeBlockFromOrderList(buddy);
     removeBlockFromOrderList(block);
+    block->is_free = true;
+
     // merge the two blocks
     block->size = block->size * 2 + sizeof(MallocMetaData);
-    block->is_free = true;
-    block->next = NULL;
-    block->prev = NULL;
+
+
     // add the new block to the list of orders
     addBlockToOrderList(block);
+    // for (int i = 0; i <= MAX_ORDER; i++) {
+    //     MallocMetaData* temp = listOfOrders[i];
+    //      while(temp != NULL) {
+    //     std::cout<<"in list size after merging for order "<<i<<" size is "<< temp->size<<std::endl;
+    //     temp = temp->next;
+    // }
+    // }
     // update global trackers
     --allocatedBlocks;
     allocatedBytes += sizeof(MallocMetaData);
@@ -340,6 +325,7 @@ void* smalloc(size_t size) {
         }
         // update MetaData
         ptr->size = size;
+        ptr->realSize = size;
         ptr->is_free = false;
 
         // block allocated via mmap, is not connected to double linked list of regular blocks
@@ -404,7 +390,53 @@ void sfree(void* p) {
 }
 
 void* srealloc(void* oldp, size_t size) {
-    return NULL;    
+    if (size == 0 || size > 100000000) 
+        return NULL;
+    if (oldp == NULL) {
+        return smalloc(size);
+    }
+    MallocMetaData* currentData = (MallocMetaData*) oldp;
+    --currentData;
+    size_t realUsedSize = currentData->realSize;
+    // try to use block without merging
+    if (currentData->size >= size) {
+        return oldp;
+    }
+    // case 1: mmap:
+    if ((size + sizeof(MallocMetaData)) > MAX_BLOCK_SIZE) {
+        void* newptr = smalloc(size);
+        if (!newptr) {
+            return NULL;
+        } else {
+            memmove(newptr, oldp, realUsedSize);
+            sfree(oldp);
+            return newptr;
+        }
+    } else {
+        //check for buddy
+        MallocMetaData* buddy = locateBuddy(currentData);
+        currentData->is_free = true;
+        while (buddy != NULL && buddy->is_free && buddy->size == currentData->size) {
+            mergeWithBuddy(currentData, buddy);
+            removeBlockFromOrderList(buddy);
+            buddy = locateBuddy(currentData);
+
+            if(currentData->size >= size) {
+                currentData->is_free = false;
+                removeBlockFromOrderList(currentData);
+                memmove(++currentData, oldp, realUsedSize);
+                return (void*)currentData;
+            }
+        }
+        void* newptr = smalloc(size);
+        if (!newptr) {
+            return NULL;
+        } else {
+            memmove(newptr, oldp, realUsedSize);
+            sfree(oldp);
+            return newptr;
+        }
+    }
 }
 
 size_t _num_allocated_bytes() {
@@ -416,6 +448,11 @@ size_t _num_free_bytes() {
     for (int i = 0; i <= MAX_ORDER; i++) {
         MallocMetaData* tmp = listOfOrders[i];
         while (tmp != NULL) {
+            if(!tmp->is_free) {
+                // std::cout<<tmp->is_free<<std::endl;
+                tmp = tmp->next;
+                continue;
+            }
             num += tmp->size;
             tmp = tmp->next;
         }
